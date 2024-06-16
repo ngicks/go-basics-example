@@ -102,6 +102,40 @@ func sendMultipartStream(ctx context.Context, url string, client *http.Client) e
 	randomMsg1 := strings.NewReader("foobarbaz")
 	randomMgs2 := strings.NewReader("quxquuxcorge")
 
+	writeMultipart := func(mw *multipart.Writer, buf []byte, content1, content2 io.Reader) error {
+		var (
+			w   io.Writer
+			err error
+		)
+
+		w, err = mw.CreateFormField("foo")
+		if err != nil {
+			return err
+		}
+
+		_, err = io.CopyBuffer(w, content1, buf)
+		if err != nil {
+			return err
+		}
+
+		w, err = mw.CreateFormFile("bar", "bar.tar.gz")
+		if err != nil {
+			return err
+		}
+
+		_, err = io.CopyBuffer(w, content2, buf)
+		if err != nil {
+			return err
+		}
+
+		err = mw.Close()
+		if err != nil {
+			return err
+		}
+
+		return err
+	}
+
 	/*
 		1.
 		一旦でセクション内容以外を書き出してデータサイズをえる。
@@ -109,23 +143,10 @@ func sendMultipartStream(ctx context.Context, url string, client *http.Client) e
 		サイズは既知であるのでこれでContent-Lengthを適切に設定できる。
 	*/
 	metaData := bytes.Buffer{}
-	mw := multipart.NewWriter(&metaData)
-
-	_, err := mw.CreateFormField("foo")
+	err := writeMultipart(multipart.NewWriter(&metaData), nil, bytes.NewBuffer(nil), bytes.NewBuffer(nil))
 	if err != nil {
 		return err
 	}
-
-	_, err = mw.CreateFormFile("bar", "bar.tar.gz")
-	if err != nil {
-		return err
-	}
-
-	err = mw.Close()
-	if err != nil {
-		return err
-	}
-
 	fmt.Printf("meta data size = %d\n\n", metaData.Len())
 
 	/*
@@ -136,42 +157,19 @@ func sendMultipartStream(ctx context.Context, url string, client *http.Client) e
 		これをhttp.NewRequestWithContextに渡す。
 	*/
 	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
 	defer pr.Close()
-	mw = multipart.NewWriter(pw)
 	go func() {
 		/*
 			3.
 			goroutineの中で書き込む処理そのものは
 			non-stream版とさほど変わらない
 		*/
-		var (
-			err error
-			w   io.Writer
-		)
+		var err error
 		defer func() {
-			mwCloseErr := mw.Close()
-			if err == nil {
-				err = mwCloseErr
-			}
 			_ = pw.CloseWithError(err)
 		}()
-		w, err = mw.CreateFormField("foo")
-		if err != nil {
-			return
-		}
-		_, err = io.Copy(w, randomMsg1)
-		if err != nil {
-			return
-		}
-
-		w, err = mw.CreateFormFile("bar", "bar.tar.gz")
-		if err != nil {
-			return
-		}
-		_, err = io.Copy(w, randomMgs2)
-		if err != nil {
-			return
-		}
+		err = writeMultipart(mw, nil, randomMsg1, randomMgs2)
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
