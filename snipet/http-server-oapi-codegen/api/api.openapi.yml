@@ -1,0 +1,79 @@
+openapi: "3.0.3"
+info:
+  version: 1.0.0
+  title: Generate models
+paths:
+  /foo:
+    get:
+      responses:
+        200:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FooMap"
+        404:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FooError"
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Foo"
+      responses:
+        200:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Foo"
+        400:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FooError2"
+components:
+  schemas:
+    Foo:
+      type: object
+      required:
+        - name
+        - rant
+      properties:
+        name:
+          type: string
+        rant:
+          type: string
+    FooMap:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/Foo"
+    FooError:
+      oneOf:
+        - $ref: "#/components/schemas/Error1"
+        - $ref: "#/components/schemas/Error2"
+        - $ref: "#/components/schemas/Error3"
+    FooError2:
+      allOf:
+        - $ref: "#/components/schemas/Error1"
+        - $ref: "#/components/schemas/Error2"
+        - $ref: "#/components/schemas/Error3"
+    Error1:
+      type: object
+      properties:
+        foo:
+          type: string
+          nullable: true
+    Error2:
+      type: object
+      properties:
+        bar:
+          type: string
+          nullable: true
+    Error3:
+      type: object
+      properties:
+        baz:
+          type: string
+          nullable: true
