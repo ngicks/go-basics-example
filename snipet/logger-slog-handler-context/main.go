@@ -42,6 +42,9 @@ func newCtxHandler(inner slog.Handler, ctxGroupName string, keyMapping map[any]s
 		return nil, errors.New("ctxHandler: mismatching len(keyMapping) and len(keyOrder)")
 	}
 	for _, k := range keyOrder {
+		if k.key == SlogAttrsKey {
+			return nil, fmt.Errorf("ctxHandler: keyOrder must not include %s", SlogAttrsKey)
+		}
 		_, ok := keyMapping[k.key]
 		if !ok {
 			return nil, errors.New("ctxHandler: keyOrder contains unknown key")
@@ -61,6 +64,8 @@ func (h *ctxHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *ctxHandler) Handle(ctx context.Context, record slog.Record) error {
+	ctxSlogAttrs, _ := ctx.Value(SlogAttrsKey).([]slog.Attr)
+
 	var ctxAttrs []slog.Attr
 	for _, k := range h.keyOrder {
 		v := ctx.Value(k.key)
@@ -71,6 +76,9 @@ func (h *ctxHandler) Handle(ctx context.Context, record slog.Record) error {
 	}
 
 	topGrAttrs := h.groups[0].attr
+	if len(ctxSlogAttrs) > 0 {
+		topGrAttrs = append(topGrAttrs, ctxSlogAttrs...)
+	}
 	if h.ctxGroupName == "" {
 		topGrAttrs = append(ctxAttrs, slices.Clone(topGrAttrs)...)
 	}
@@ -149,6 +157,7 @@ type keyTy string
 const (
 	RequestIdKey keyTy = "request-id"
 	SyncMapKey   keyTy = "sync-map"
+	SlogAttrsKey keyTy = "[]slog.Attr"
 )
 
 func must[V any](v V, err error) V {
@@ -164,9 +173,8 @@ func main() {
 			h,
 			ctxName,
 			map[any]string{
-				RequestIdKey:       "request-key",
-				SyncMapKey:         "values",
-				"request-received": "request-received",
+				RequestIdKey: "request-key",
+				SyncMapKey:   "values",
 			},
 			[]keyConverter{
 				{key: RequestIdKey},
@@ -181,9 +189,6 @@ func main() {
 						return true
 					})
 					return values
-				}},
-				{key: "request-received", convert: func(_ any) any {
-					return time.Now()
 				}},
 			},
 		)
@@ -201,6 +206,14 @@ func main() {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, RequestIdKey, randomId)
 	ctx = context.WithValue(ctx, SyncMapKey, store)
+	ctx = context.WithValue(
+		ctx,
+		SlogAttrsKey,
+		[]slog.Attr{
+			slog.Group("g1", slog.Any("a", time.Monday)),
+			slog.Group("g2", slog.String("foo", "bar")),
+		},
+	)
 
 	for _, ctxGroupName := range []string{"", "ctx"} {
 		logger := slog.New(
@@ -214,10 +227,10 @@ func main() {
 		logger.With("foo", "bar").WithGroup("nah").With("why", "why not").DebugContext(ctx, "nay")
 	}
 	/*
-	   {"time":"2024-06-13T15:20:39.178198009Z","level":"DEBUG","msg":"yay","request-key":"d2a4f0e9bc80f229a2e91abc46f4752e","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"},"request-received":"2024-06-13T15:20:39.17820893Z","yay":"yayay"}
-	   {"time":"2024-06-13T15:20:39.17829812Z","level":"DEBUG","msg":"nay","request-key":"d2a4f0e9bc80f229a2e91abc46f4752e","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"},"request-received":"2024-06-13T15:20:39.178298952Z","foo":"bar","nah":{"why":"why not"}}
-	   {"time":"2024-06-13T15:20:39.178314551Z","level":"DEBUG","msg":"yay","ctx":{"request-key":"d2a4f0e9bc80f229a2e91abc46f4752e","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"},"request-received":"2024-06-13T15:20:39.178315423Z"},"yay":"yayay"}
-	   {"time":"2024-06-13T15:20:39.178328608Z","level":"DEBUG","msg":"nay","ctx":{"request-key":"d2a4f0e9bc80f229a2e91abc46f4752e","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"},"request-received":"2024-06-13T15:20:39.17832927Z"},"foo":"bar","nah":{"why":"why not"}}
+		{"time":"2024-06-16T15:24:07.981165471Z","level":"DEBUG","msg":"yay","request-key":"753572e4a2215c4226ea745baa4a8ab3","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"},"g1":{"a":1},"g2":{"foo":"bar"},"yay":"yayay"}
+		{"time":"2024-06-16T15:24:07.981226197Z","level":"DEBUG","msg":"nay","request-key":"753572e4a2215c4226ea745baa4a8ab3","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"},"foo":"bar","g1":{"a":1},"g2":{"foo":"bar"},"nah":{"why":"why not"}}
+		{"time":"2024-06-16T15:24:07.98123834Z","level":"DEBUG","msg":"yay","ctx":{"request-key":"753572e4a2215c4226ea745baa4a8ab3","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"}},"g1":{"a":1},"g2":{"foo":"bar"},"yay":"yayay"}
+		{"time":"2024-06-16T15:24:07.981248289Z","level":"DEBUG","msg":"nay","ctx":{"request-key":"753572e4a2215c4226ea745baa4a8ab3","values":{"bar":123,"baz":{"Key":"baz","Value":"bazbaz"},"foo":"foo"}},"foo":"bar","g1":{"a":1},"g2":{"foo":"bar"},"nah":{"why":"why not"}}
 	*/
 	var buf bytes.Buffer
 	handler := must(wrapHandler(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}), ""))
